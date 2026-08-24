@@ -1,0 +1,85 @@
+# .github/workflows/deploy.yml
+name: CD — Deploy Pipeline
+
+on:
+  push:
+    branches: [deploy]       # fires when code is pushed/merged to 'deploy' branch
+  workflow_dispatch:          # also allows manual trigger from GitHub UI
+
+jobs:
+  # ── Step 1: Run all quality gates before deploying ──────────────────────────
+  quality-check:
+    name: Pre-Deploy Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+  # ── Step 2: Deploy (only runs if quality gates pass) ────────────────────────
+  deploy:
+    name: Deploy to Production
+    needs: quality-check        # blocked until quality-check job succeeds
+    runs-on: ubuntu-latest
+
+    environment: production     # links to the 'production' env you created in GitHub
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy
+        run: |
+          echo "✅ All quality gates passed!"
+          echo "🚀 Deploying from branch: ${{ github.ref_name }}"
+          echo "   Commit:      ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp:   $(date)"
+          # TODO: Replace this with your real deploy command when you're ready
+
+      - name: Notify on success
+        if: success()
+        run: echo "🎉 Deployment to production succeeded!"
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "❌ Deployment failed — check the logs above."
