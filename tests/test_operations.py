@@ -2,7 +2,7 @@
 
 import pytest
 
-from calculator.operations import add, divide, multiply, subtract
+from calculator.operations import add, divide, multiply, power, subtract
 
 
 class TestAdd:
@@ -48,3 +48,17 @@ class TestDivide:
     def test_divide_by_zero_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot divide by zero"):
             divide(10, 0)
+
+
+class TestPower:
+    def test_power_positive_exponent(self) -> None:
+        assert power(2, 3) == 8.0
+
+    def test_power_zero_exponent(self) -> None:
+        assert power(5, 0) == 1.0
+
+    def test_power_negative_exponent(self) -> None:
+        assert power(2, -1) == 0.5
+
+    def test_power_fractional_exponent(self) -> None:
+        assert power(9, 0.5) == 3.0
