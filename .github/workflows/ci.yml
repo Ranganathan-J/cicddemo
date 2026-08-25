@@ -67,41 +67,6 @@ jobs:
       - name: Pytest — Run tests with coverage
         run: pytest tests/ --cov=src --cov-report=term-missing
 
-  # ── Build artifact (built once, promoted through environments) ──
-  # Deploy jobs download this exact artifact — nothing is rebuilt later.
-  build:
-    name: Build Artifact
-    needs: quality             # only runs if all quality gates pass
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install build tool
-        run: pip install build
-
-      - name: Build wheel
-        run: python -m build --wheel --outdir dist/
-
-      - name: Show built artifact
-        run: |
-          echo "📦 Built artifact:"
-          ls -lh dist/
-
-      # Upload so deploy jobs can download the exact same wheel
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ github.sha }}
-          path: dist/
-          retention-days: 7
-
   # ── Upload coverage report ─────────────────────────────────────
   coverage:
     name: Upload Coverage

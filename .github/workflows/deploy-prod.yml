@@ -9,8 +9,8 @@ on:
 
 jobs:
   # ── Phase 1: Deploy to Production ────────────────────────────────────────────
-  # Promotes the SAME artifact built by ci.yml — nothing is rebuilt.
-  # Quality gates already passed in ci.yml on the PR before merge.
+  # Checks out the exact merged commit, builds the wheel, and deploys.
+  # Quality gates already passed in ci.yml on the PR — no duplication here.
   # If 'Required Reviewers' is set on the 'production' environment in
   # Settings → Environments → production, GitHub pauses here for approval.
   deploy-prod:
@@ -27,16 +27,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Promote the exact same artifact that was deployed to QA — no rebuild.
-      - name: Download artifact from CI
-        uses: actions/download-artifact@v4
+      - name: Cache pip
+        uses: actions/cache@v4
         with:
-          name: dist-${{ github.sha }}
-          path: dist/
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Show promoted artifact
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
+
+      - name: Show built artifact
         run: |
-          echo "📦 Promoting artifact to Production:"
+          echo "📦 Built artifact:"
           ls -lh dist/
 
       - name: Deploy to Production
@@ -51,7 +58,7 @@ jobs:
           echo "✅ Production deployment complete."
           # TODO: Replace with your real Production deploy command, e.g.:
           #   pip install dist/*.whl --target /app
-          #   ssh user@prod-host "cd /app && pip install dist/*.whl && systemctl restart app"
+          #   ssh user@prod-host "pip install dist/*.whl && systemctl restart app"
 
       - name: Notify — Success
         if: success()
@@ -64,12 +71,9 @@ jobs:
         run: echo "❌ Production deployment failed — review the logs above."
 
   # ── Phase 2: Post-Deploy Production Verification ──────────────────────────────
-  # Verifies Production is healthy after deployment. No approval needed —
-  # runs automatically after deploy-prod passes.
-  # Replace the pytest block with a real HTTP health check when you have a
-  # deployed service URL:
-  #   - name: Health Check
-  #     run: curl -f https://your-prod-service.com/health || exit 1
+  # Verifies Production is healthy. Runs automatically after deploy-prod passes.
+  # When you have a real Production URL, replace the pytest block with:
+  #   curl -f https://your-prod-service.com/health || exit 1
   post-deploy-prod:
     name: "Post-Deploy Production Verification"
     needs: deploy-prod
@@ -122,13 +126,13 @@ jobs:
           echo "   Investigate immediately — consider rolling back the deployment."
           echo ""
           echo "🔄 Rollback steps:"
-          echo "   1. Identify the last stable release tag: git tag -l | sort -V | tail -5"
-          echo "   2. Deploy the previous artifact from that tag's CI run"
+          echo "   1. Find the last stable tag: git tag -l | sort -V | tail -5"
+          echo "   2. Redeploy from that tag's commit"
           echo "   # TODO: Add your real rollback command here"
 
   # ── Phase 3: Tag Release ──────────────────────────────────────────────────────
-  # Creates a Git tag (v<run_number>) on successful Production deployment.
-  # Gives you a clear audit trail of every production release.
+  # Creates a Git tag (v<run_number>) on every successful Production deployment.
+  # Gives a clear audit trail: which run number = which production release.
   tag-release:
     name: "Tag Release"
     needs: post-deploy-prod

@@ -14,8 +14,8 @@ on:
 
 jobs:
   # ── Phase 1: Deploy to QA ────────────────────────────────────────────────────
-  # Downloads the artifact built by ci.yml (no rebuild, no duplicate gate checks).
-  # Quality gates already passed in ci.yml before this workflow runs.
+  # Checks out the exact commit, builds the wheel, and deploys to QA.
+  # Quality gates already passed in ci.yml — no duplication here.
   deploy-qa:
     name: "Deploy to QA"
     runs-on: ubuntu-latest
@@ -30,16 +30,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Download the exact artifact built by ci.yml for this commit
-      - name: Download artifact from CI
-        uses: actions/download-artifact@v4
+      - name: Cache pip
+        uses: actions/cache@v4
         with:
-          name: dist-${{ github.sha }}
-          path: dist/
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Show downloaded artifact
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
+
+      - name: Show built artifact
         run: |
-          echo "📦 Artifact to deploy:"
+          echo "📦 Built artifact:"
           ls -lh dist/
 
       - name: Deploy to QA
@@ -54,16 +61,17 @@ jobs:
           echo "✅ QA deployment complete."
           # TODO: Replace with your real QA deploy command, e.g.:
           #   pip install dist/*.whl --target /app
-          #   ssh user@qa-host "cd /app && pip install dist/*.whl && systemctl restart app"
+          #   ssh user@qa-host "pip install dist/*.whl && systemctl restart app"
 
       - name: Notify — Failure
         if: failure()
         run: echo "❌ QA deployment failed — review the logs above."
 
   # ── Phase 2: Post-Deploy QA Verification ─────────────────────────────────────
-  # Verifies the deployed service is healthy. Tests the running service,
-  # not the source code. When you have a real QA URL, replace the pytest
-  # block with: curl -f https://your-qa-service/health || exit 1
+  # Verifies QA is healthy after deployment. Tests the running service,
+  # not the source code quality (gates already ran in ci.yml).
+  # When you have a real QA URL, replace the pytest block with:
+  #   curl -f https://your-qa-service/health || exit 1
   post-deploy-qa:
     name: "Post-Deploy QA Verification"
     needs: deploy-qa
@@ -91,10 +99,6 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       # ── Health / Smoke Check ───────────────────────────────────
-      # Replace this block with a real HTTP health check when you have a
-      # deployed service URL:
-      #   - name: Health Check
-      #     run: curl -f https://your-qa-service.com/health || exit 1
       - name: Smoke Tests — QA
         run: |
           echo "🔍 Running smoke tests against QA..."
