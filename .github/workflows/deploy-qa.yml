@@ -13,11 +13,13 @@ on:
   workflow_dispatch:   # manual trigger as fallback
 
 jobs:
-  # ── Phase 1: Pre-Deploy Gates ─────────────────────────────────────────────────
-  # Runs immediately on push. All quality gates must pass before QA deployment.
-  pre-deploy:
-    name: "Pre-Deploy Gates QA"
+  # ── Phase 1: Deploy to QA ────────────────────────────────────────────────────
+  # Checks out the exact commit, builds the wheel, and deploys to QA.
+  # Quality gates already passed in ci.yml — no duplication here.
+  deploy-qa:
+    name: "Deploy to QA"
     runs-on: ubuntu-latest
+    environment: qa
 
     steps:
       - name: Checkout code
@@ -36,57 +38,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dev dependencies
+      - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Black — Format check
-        run: black --check .
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
 
-      - name: isort — Import order check
-        run: isort --check-only .
-
-      - name: Flake8 — Lint check
-        run: flake8 src/ tests/
-
-      - name: MyPy — Type check
-        run: mypy src/
-
-      - name: Bandit — Security scan
-        run: bandit -r src/ -ll
-
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
-
-      - name: Pre-Deploy Summary
-        if: success()
+      - name: Show built artifact
         run: |
-          echo "✅ All pre-deploy gates passed!"
-          echo "   Branch      : ${{ github.ref_name }}"
-          echo "   Commit      : ${{ github.sha }}"
-          echo "   Triggered by: ${{ github.actor }}"
-          echo ""
-          echo "🚦 Proceeding to QA deployment..."
-
-  # ── Phase 2: Deploy to QA ─────────────────────────────────────────────────────
-  # Runs automatically after pre-deploy passes. No approval needed.
-  deploy-qa:
-    name: "Deploy to QA"
-    needs: pre-deploy
-    runs-on: ubuntu-latest
-    environment: qa
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+          echo "📦 Built artifact:"
+          ls -lh dist/
 
       - name: Deploy to QA
         run: |
           echo "🚀 Deploying to QA..."
+          echo "   Artifact    : $(ls dist/)"
           echo "   Branch      : ${{ github.ref_name }}"
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
@@ -94,15 +60,18 @@ jobs:
           echo ""
           echo "✅ QA deployment complete."
           # TODO: Replace with your real QA deploy command, e.g.:
-          #   ssh user@qa-host "cd /app && git pull && systemctl restart app"
+          #   pip install dist/*.whl --target /app
+          #   ssh user@qa-host "pip install dist/*.whl && systemctl restart app"
 
       - name: Notify — Failure
         if: failure()
         run: echo "❌ QA deployment failed — review the logs above."
 
-  # ── Phase 3: Post-Deploy QA Verification ─────────────────────────────────────
-  # Runs automatically after QA deploy passes. Validates QA is healthy.
-  # If this fails, open a PR to main is blocked by the broken QA state.
+  # ── Phase 2: Post-Deploy QA Verification ─────────────────────────────────────
+  # Verifies QA is healthy after deployment. Tests the running service,
+  # not the source code quality (gates already ran in ci.yml).
+  # When you have a real QA URL, replace the pytest block with:
+  #   curl -f https://your-qa-service/health || exit 1
   post-deploy-qa:
     name: "Post-Deploy QA Verification"
     needs: deploy-qa
@@ -129,26 +98,7 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
-      # ── Quality Gates ──────────────────────────────────────────
-      - name: Black — Format check
-        run: black --check .
-
-      - name: isort — Import order check
-        run: isort --check-only .
-
-      - name: Flake8 — Lint check
-        run: flake8 src/ tests/
-
-      - name: MyPy — Type check
-        run: mypy src/
-
-      - name: Bandit — Security scan
-        run: bandit -r src/ -ll
-
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
-
-      # ── Smoke Tests ────────────────────────────────────────────
+      # ── Health / Smoke Check ───────────────────────────────────
       - name: Smoke Tests — QA
         run: |
           echo "🔍 Running smoke tests against QA..."

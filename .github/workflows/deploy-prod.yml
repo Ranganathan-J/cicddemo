@@ -8,12 +8,15 @@ on:
   workflow_dispatch:  # manual trigger as fallback
 
 jobs:
-  # ── Phase 1: Pre-Deploy Gates ─────────────────────────────────────────────────
-  # Runs immediately on merge to main. All quality gates must pass before
-  # Production deployment begins.
-  pre-deploy:
-    name: "Pre-Deploy Gates - Prod"
+  # ── Phase 1: Deploy to Production ────────────────────────────────────────────
+  # Checks out the exact merged commit, builds the wheel, and deploys.
+  # Quality gates already passed in ci.yml on the PR — no duplication here.
+  # If 'Required Reviewers' is set on the 'production' environment in
+  # Settings → Environments → production, GitHub pauses here for approval.
+  deploy-prod:
+    name: "Deploy to Production"
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Checkout code
@@ -32,60 +35,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dev dependencies
+      - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Black — Format check
-        run: black --check .
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
 
-      - name: isort — Import order check
-        run: isort --check-only .
-
-      - name: Flake8 — Lint check
-        run: flake8 src/ tests/
-
-      - name: MyPy — Type check
-        run: mypy src/
-
-      - name: Bandit — Security scan
-        run: bandit -r src/ -ll
-
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
-
-      - name: Pre-Deploy Summary
-        if: success()
+      - name: Show built artifact
         run: |
-          echo "✅ All pre-deploy gates passed!"
-          echo "   Branch      : ${{ github.ref_name }}"
-          echo "   Commit      : ${{ github.sha }}"
-          echo "   Triggered by: ${{ github.actor }}"
-          echo ""
-          echo "🚦 Proceeding to Production deployment..."
-
-  # ── Phase 2: Deploy to Production ────────────────────────────────────────────
-  # Runs after pre-deploy passes.
-  # If 'Required Reviewers' is set on the 'production' environment in
-  # Settings → Environments → production, GitHub will pause here for approval.
-  # If not set, this runs automatically.
-  deploy-prod:
-    name: "Deploy to Production"
-    needs: pre-deploy
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+          echo "📦 Built artifact:"
+          ls -lh dist/
 
       - name: Deploy to Production
         run: |
           echo "🚀 Deploying to Production..."
+          echo "   Artifact    : $(ls dist/)"
           echo "   Branch      : ${{ github.ref_name }}"
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
@@ -93,7 +57,8 @@ jobs:
           echo ""
           echo "✅ Production deployment complete."
           # TODO: Replace with your real Production deploy command, e.g.:
-          #   ssh user@prod-host "cd /app && git pull && systemctl restart app"
+          #   pip install dist/*.whl --target /app
+          #   ssh user@prod-host "pip install dist/*.whl && systemctl restart app"
 
       - name: Notify — Success
         if: success()
@@ -105,9 +70,10 @@ jobs:
         if: failure()
         run: echo "❌ Production deployment failed — review the logs above."
 
-  # ── Phase 3: Post-Deploy Production Verification ──────────────────────────────
-  # Runs automatically after Production deploy passes. No additional approval
-  # needed. Validates Production is healthy after the deployment.
+  # ── Phase 2: Post-Deploy Production Verification ──────────────────────────────
+  # Verifies Production is healthy. Runs automatically after deploy-prod passes.
+  # When you have a real Production URL, replace the pytest block with:
+  #   curl -f https://your-prod-service.com/health || exit 1
   post-deploy-prod:
     name: "Post-Deploy Production Verification"
     needs: deploy-prod
@@ -133,26 +99,7 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
-      # ── Quality Gates ──────────────────────────────────────────
-      - name: Black — Format check
-        run: black --check .
-
-      - name: isort — Import order check
-        run: isort --check-only .
-
-      - name: Flake8 — Lint check
-        run: flake8 src/ tests/
-
-      - name: MyPy — Type check
-        run: mypy src/
-
-      - name: Bandit — Security scan
-        run: bandit -r src/ -ll
-
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
-
-      # ── Smoke Tests ────────────────────────────────────────────
+      # ── Health / Smoke Check ───────────────────────────────────
       - name: Smoke Tests — Production
         run: |
           echo "🔍 Running smoke tests against Production..."
@@ -171,11 +118,38 @@ jobs:
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
           echo "   Timestamp   : $(date -u)"
-          echo ""
-          echo "🏁 Production deployment pipeline complete."
 
       - name: Production Verification — Failure
         if: failure()
         run: |
           echo "❌ Production smoke tests FAILED!"
           echo "   Investigate immediately — consider rolling back the deployment."
+          echo ""
+          echo "🔄 Rollback steps:"
+          echo "   1. Find the last stable tag: git tag -l | sort -V | tail -5"
+          echo "   2. Redeploy from that tag's commit"
+          echo "   # TODO: Add your real rollback command here"
+
+  # ── Phase 3: Tag Release ──────────────────────────────────────────────────────
+  # Creates a Git tag (v<run_number>) on every successful Production deployment.
+  # Gives a clear audit trail: which run number = which production release.
+  tag-release:
+    name: "Tag Release"
+    needs: post-deploy-prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history needed to push tags
+
+      - name: Create and push release tag
+        run: |
+          TAG="v${{ github.run_number }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Production release $TAG — commit ${{ github.sha }}"
+          git push origin "$TAG"
+          echo "🏷️  Tagged release: $TAG"
+          echo "🏁 Full QA → Production pipeline complete."

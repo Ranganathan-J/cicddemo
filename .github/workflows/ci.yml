@@ -5,7 +5,8 @@ on:
   push:
     branches:
       - main
-      - "feature/**"
+      - "featurebranch"
+      - "featurebranch/**"
       - "fix/**"
       - "bugfix/**"
       - "hotfix/**"
@@ -66,7 +67,7 @@ jobs:
       - name: Pytest — Run tests with coverage
         run: pytest tests/ --cov=src --cov-report=term-missing
 
-  # Optional: upload coverage report as artifact
+  # ── Upload coverage report ─────────────────────────────────────
   coverage:
     name: Upload Coverage
     needs: quality
