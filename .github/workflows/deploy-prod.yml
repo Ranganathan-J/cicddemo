@@ -137,6 +137,8 @@ jobs:
     name: "Tag Release"
     needs: post-deploy-prod
     runs-on: ubuntu-latest
+    permissions:
+      contents: write           # required to push tags to the repository
 
     steps:
       - name: Checkout code
