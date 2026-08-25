@@ -1,0 +1,130 @@
+# Two-File GitFlow Deployment Pipeline
+
+## What Changes
+
+Replace `deploy-pipeline.yml` with **two separate workflow files**, each triggered
+by a Git event — no manual button needed.
+
+| File | Trigger | Environment |
+|---|---|---|
+| `deploy-qa.yml` | Push to `feature/**`, `fix/**`, `bugfix/**`, `hotfix/**`, `chore/**` | `qa` |
+| `deploy-prod.yml` | Push to `main` (i.e. when a PR is merged) | `production` |
+
+`ci.yml` stays unchanged.
+
+---
+
+## Full Flow
+
+```
+Developer pushes to feature branch
+        │
+        ▼
+  deploy-qa.yml runs automatically
+  ┌──────────────────────────────┐
+  │ Job 1: pre-deploy            │  quality gates + pytest
+  │ Job 2: deploy-qa             │  deploy to QA  (environment: qa)
+  │ Job 3: post-deploy-qa        │  gates + smoke tests on QA
+  └──────────────────────────────┘
+        │  QA looks good
+        ▼
+  Developer opens PR → main
+        │
+        ▼
+  ci.yml runs on the PR (existing behaviour)
+        │
+        ▼
+  PR reviewed & merged to main
+        │
+        ▼
+  deploy-prod.yml runs automatically
+  ┌──────────────────────────────┐
+  │ Job 1: pre-deploy            │  quality gates + pytest
+  │ Job 2: deploy-prod           │  deploy to Production
+  │                              │  (environment: production)
+  │                              │  ← approval gate if Required Reviewers set
+  │ Job 3: post-deploy-prod      │  gates + smoke tests on Production
+  └──────────────────────────────┘
+        │
+        ▼
+     🏁 Done
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> `deploy-pipeline.yml` will be **deleted**.
+> Replaced by `deploy-qa.yml` and `deploy-prod.yml`.
+
+> [!NOTE]
+> The `production` environment approval gate is optional.
+> If **Required Reviewers** is set on your `production` environment, the
+> `deploy-prod` job will pause for approval before running.
+> If not set, it runs automatically on merge to `main`.
+
+---
+
+## Proposed Changes
+
+### [DELETE] [`deploy-pipeline.yml`](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy-pipeline.yml)
+
+---
+
+### [NEW] `deploy-qa.yml`
+**Trigger:** `push` to `feature/**`, `fix/**`, `bugfix/**`, `hotfix/**`, `chore/**`
+
+```
+on:
+  push:
+    branches:
+      - "feature/**"
+      - "fix/**"
+      - "bugfix/**"
+      - "hotfix/**"
+      - "chore/**"
+  workflow_dispatch:   # also allows manual trigger if needed
+
+jobs:
+  pre-deploy   → deploy-qa   → post-deploy-qa
+  (all sequential, all automatic, environment: qa)
+```
+
+---
+
+### [NEW] `deploy-prod.yml`
+**Trigger:** `push` to `main` (fires when a PR is merged)
+
+```
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:   # also allows manual trigger if needed
+
+jobs:
+  pre-deploy   → deploy-prod   → post-deploy-prod
+  (sequential, environment: production on deploy-prod)
+```
+
+---
+
+## Files After Change
+
+```
+.github/workflows/
+├── ci.yml              ✅ Unchanged — runs on push/PR for code quality
+├── deploy-qa.yml       🆕 Auto-runs on push to feature branches → QA
+└── deploy-prod.yml     🆕 Auto-runs on merge to main → Production
+```
+
+---
+
+## Verification Plan
+
+1. Push to a feature branch → confirm `deploy-qa.yml` triggers automatically
+2. All 3 QA jobs pass in sequence
+3. Open PR to `main` → confirm `ci.yml` runs (existing behaviour)
+4. Merge PR to `main` → confirm `deploy-prod.yml` triggers automatically
+5. All 3 Production jobs run in sequence
