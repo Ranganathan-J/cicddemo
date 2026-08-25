@@ -2,7 +2,7 @@
 
 import pytest
 
-from calculator.operations import add, divide, multiply, power, subtract
+from calculator.operations import add, divide, multiply, subtract
 
 
 class TestAdd:
