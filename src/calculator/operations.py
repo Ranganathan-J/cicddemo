@@ -23,6 +23,6 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-def power(base: float, exponent: float) -> float:
-    """Return base raised to the power of exponent."""
-    return float(base ** exponent)
+# def power(base: float, exponent: float) -> float:
+#     """Return base raised to the power of exponent."""
+#     return float(base**exponent)
