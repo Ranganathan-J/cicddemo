@@ -4,7 +4,7 @@ name: Deploy — QA
 on:
   push:
     branches:
-      - "feature/**"
+      - "featurebranch/**"
       - "fix/**"
       - "bugfix/**"
       - "hotfix/**"
