@@ -3,7 +3,13 @@ name: CI — Code Quality & Tests
 
 on:
   push:
-    branches: [main, "feature/**"]
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
+      - "bugfix/**"
+      - "hotfix/**"
+      - "chore/**"
   pull_request:
     branches: [main]
 
