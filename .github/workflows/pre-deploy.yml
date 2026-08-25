@@ -1,0 +1,79 @@
+# .github/workflows/pre-deploy.yml
+name: Phase 1 — Pre-Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  pre-deploy:
+    name: Pre-Deploy Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Python Setup ──────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── Cache pip dependencies ─────────────────────────────────
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # ── Install tools ──────────────────────────────────────────
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── Gate 1: Black ─────────────────────────────────────────
+      - name: Black — Format check
+        run: black --check .
+
+      # ── Gate 2: isort ─────────────────────────────────────────
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      # ── Gate 3: Flake8 ────────────────────────────────────────
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      # ── Gate 4: MyPy ──────────────────────────────────────────
+      - name: MyPy — Type check
+        run: mypy src/
+
+      # ── Gate 5: Bandit ────────────────────────────────────────
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll   # flag only medium+ severity
+
+      # ── Tests ─────────────────────────────────────────────────
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      # ── Summary ───────────────────────────────────────────────
+      - name: Pre-Deploy Summary
+        if: success()
+        run: |
+          echo "✅ All pre-deploy gates passed!"
+          echo "   Environment : ${{ inputs.environment }}"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo ""
+          echo "👉 Ready to proceed — trigger Phase 2 (deploy.yml) when ready."

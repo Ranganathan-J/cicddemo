@@ -1,85 +1,64 @@
 # .github/workflows/deploy.yml
-name: CD — Deploy Pipeline
+name: Phase 2 — Deploy
 
 on:
-  push:
-    branches: [deploy]       # fires when code is pushed/merged to 'deploy' branch
-  workflow_dispatch:          # also allows manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - staging
+          - production
 
 jobs:
-  # ── Step 1: Run all quality gates before deploying ──────────────────────────
-  quality-check:
-    name: Pre-Deploy Quality Gates
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Black — Format check
-        run: black --check .
-
-      - name: isort — Import order check
-        run: isort --check-only .
-
-      - name: Flake8 — Lint check
-        run: flake8 src/ tests/
-
-      - name: MyPy — Type check
-        run: mypy src/
-
-      - name: Bandit — Security scan
-        run: bandit -r src/ -ll
-
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
-
-  # ── Step 2: Deploy (only runs if quality gates pass) ────────────────────────
   deploy:
     name: Deploy to Production
-    needs: quality-check        # blocked until quality-check job succeeds
     runs-on: ubuntu-latest
 
-    environment: production     # links to the 'production' env you created in GitHub
+    # Links to your existing 'production' GitHub environment.
+    # Enforces any protection rules (Required Reviewers, wait timers, etc.)
+    # you have configured under Settings → Environments → production.
+    environment: production
 
     steps:
+      # ── Checkout ──────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ── Python Setup ──────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # ── Deploy ────────────────────────────────────────────────
+      # TODO: Replace the echo commands below with your real deploy command.
+      # Examples:
+      #   SSH deploy : ssh user@host "cd /app && git pull && restart-service"
+      #   PyPI       : python -m twine upload dist/*
+      #   Cloud Run  : gcloud run deploy ...
       - name: Deploy
         run: |
-          echo "✅ All quality gates passed!"
-          echo "🚀 Deploying from branch: ${{ github.ref_name }}"
-          echo "   Commit:      ${{ github.sha }}"
+          echo "🚀 Starting deployment..."
+          echo "   Environment : ${{ inputs.environment }}"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
-          echo "   Timestamp:   $(date)"
-          # TODO: Replace this with your real deploy command when you're ready
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "✅ Deployment step complete."
+          echo "   (Replace this block with your real deploy command)"
 
-      - name: Notify on success
+      # ── Post-step notifications ────────────────────────────────
+      - name: Notify — Success
         if: success()
-        run: echo "🎉 Deployment to production succeeded!"
+        run: |
+          echo "🎉 Deployment to ${{ inputs.environment }} succeeded!"
+          echo "👉 Proceed to Phase 3 — trigger post-deploy.yml to run smoke tests."
 
-      - name: Notify on failure
+      - name: Notify — Failure
         if: failure()
-        run: echo "❌ Deployment failed — check the logs above."
+        run: echo "❌ Deployment failed — review the logs above before retrying."
