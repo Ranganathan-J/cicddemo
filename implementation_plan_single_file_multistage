@@ -1,0 +1,139 @@
+# Single-File Sequential Deployment Pipeline
+
+## What Changes
+
+Replace the current 3 separate workflow files with **one unified pipeline file** where:
+- Phases run **sequentially** (enforced by `needs:`)
+- A **human approval gate** sits between each phase (enforced by GitHub Environment)
+- One `workflow_dispatch` button starts the entire flow
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> The following files will be **deleted**:
+> - `pre-deploy.yml`
+> - `post-deploy.yml`
+> - `deploy.yml`
+>
+> They are replaced by a single new file: `deploy-pipeline.yml`
+
+> [!IMPORTANT]
+> **GitHub Environment setup required (one-time):**
+> For the approval gates to work, go to:
+> `GitHub → Your Repo → Settings → Environments → production`
+> → Enable **Required Reviewers** and add yourself (or your team).
+> Without this, the gates won't pause — jobs will auto-proceed.
+
+---
+
+## How the Pipeline Flows
+
+```
+You click "Run workflow" (one button)
+        │
+        ▼
+┌─────────────────────────┐
+│   JOB 1: pre-deploy     │  Runs automatically
+│   Black, isort, Flake8  │
+│   MyPy, Bandit, pytest  │
+└──────────┬──────────────┘
+           │ passes
+           ▼
+    ⏸ GitHub pauses
+    "Waiting for review"     ← You click Approve in GitHub UI
+           │
+           ▼
+┌─────────────────────────┐
+│   JOB 2: deploy         │  environment: production
+│   Runs deploy command   │  (approval gate enforced here)
+└──────────┬──────────────┘
+           │ passes
+           ▼
+    ⏸ GitHub pauses
+    "Waiting for review"     ← You click Approve in GitHub UI
+           │
+           ▼
+┌─────────────────────────┐
+│   JOB 3: post-deploy    │  environment: production
+│   Smoke / health tests  │  (approval gate enforced here)
+└─────────────────────────┘
+```
+
+---
+
+## Proposed Changes
+
+### Workflow Files
+
+#### [DELETE] [`pre-deploy.yml`](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/pre-deploy.yml)
+Merged into the unified pipeline.
+
+#### [DELETE] [`deploy.yml`](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy.yml)
+Merged into the unified pipeline.
+
+#### [DELETE] [`post-deploy.yml`](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/post-deploy.yml)
+Merged into the unified pipeline.
+
+#### [NEW] `deploy-pipeline.yml`
+**Path:** `.github/workflows/deploy-pipeline.yml`
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+
+jobs:
+  pre-deploy:                        # Job 1 — runs immediately
+    runs-on: ubuntu-latest
+    steps: [quality gates + pytest]
+
+  deploy:
+    needs: pre-deploy                # blocked until Job 1 passes
+    environment: production          # ← approval gate pauses here
+    runs-on: ubuntu-latest
+    steps: [deploy command]
+
+  post-deploy:
+    needs: deploy                    # blocked until Job 2 passes
+    environment: production          # ← approval gate pauses here
+    runs-on: ubuntu-latest
+    steps: [smoke tests]
+```
+
+---
+
+## Key Behaviour
+
+| Scenario | What happens |
+|---|---|
+| `pre-deploy` fails | Pipeline stops. `deploy` and `post-deploy` never run. |
+| Reviewer rejects approval | That job is cancelled. Pipeline stops. |
+| `deploy` fails | `post-deploy` never runs. |
+| All pass | Full pipeline completes. Production is verified. |
+
+---
+
+## Files After Change
+
+```
+.github/workflows/
+├── ci.yml               ✅ Unchanged — auto CI on push/PR
+└── deploy-pipeline.yml  🆕 Single manual deploy pipeline
+```
+
+---
+
+## Verification Plan
+
+1. Push to feature branch → merge to `main`
+2. Go to **Actions** → see `deploy-pipeline.yml` with **"Run workflow"** button
+3. Click Run → `pre-deploy` job starts immediately
+4. After `pre-deploy` passes → confirm **"Waiting for review"** appears on `deploy` job
+5. Click Approve → `deploy` runs
+6. After `deploy` passes → confirm **"Waiting for review"** appears on `post-deploy` job
+7. Click Approve → `post-deploy` runs smoke tests
