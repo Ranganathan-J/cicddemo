@@ -1,21 +1,19 @@
 # .github/workflows/deploy-pipeline.yml
-name: Deploy Pipeline — Pre / Deploy / Post
+name: Deploy Pipeline — QA → Production
 
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        default: "production"
-        type: choice
-        options:
-          - staging
-          - production
+      reason:
+        description: "Reason for deployment (optional)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   # ── Phase 1: Pre-Deploy ───────────────────────────────────────────────────────
-  # Runs immediately on trigger. All quality gates must pass before deploy starts.
+  # Runs immediately on trigger. All quality gates must pass before anything
+  # is deployed to any environment.
   pre-deploy:
     name: "Phase 1 — Pre-Deploy Gates"
     runs-on: ubuntu-latest
@@ -40,6 +38,7 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
+      # ── Quality Gates ──────────────────────────────────────────
       - name: Black — Format check
         run: black --check .
 
@@ -62,22 +61,21 @@ jobs:
         if: success()
         run: |
           echo "✅ All pre-deploy gates passed!"
-          echo "   Environment : ${{ inputs.environment }}"
           echo "   Branch      : ${{ github.ref_name }}"
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
+          echo "   Reason      : ${{ inputs.reason || 'Not specified' }}"
           echo ""
-          echo "⏸  Waiting for manual approval to proceed to Deploy phase..."
+          echo "🚦 Proceeding automatically to QA deployment..."
 
-  # ── Phase 2: Deploy ───────────────────────────────────────────────────────────
-  # Blocked until Phase 1 passes. GitHub then pauses for environment approval
-  # before running the deploy steps (requires Required Reviewers on the
-  # production environment in Settings → Environments → production).
-  deploy:
-    name: "Phase 2 — Deploy"
-    needs: pre-deploy                   # ← cannot start until pre-deploy passes
+  # ── Phase 2: Deploy to QA ─────────────────────────────────────────────────────
+  # Runs automatically after pre-deploy passes.
+  # 'qa' environment has NO Required Reviewers — no approval needed.
+  deploy-qa:
+    name: "Phase 2 — Deploy to QA"
+    needs: pre-deploy
     runs-on: ubuntu-latest
-    environment: production             # ← pauses for human approval gate
+    environment: qa
 
     steps:
       - name: Checkout code
@@ -88,38 +86,30 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Deploy
+      - name: Deploy to QA
         run: |
-          echo "🚀 Starting deployment..."
-          echo "   Environment : ${{ inputs.environment }}"
+          echo "🚀 Deploying to QA..."
           echo "   Branch      : ${{ github.ref_name }}"
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
           echo "   Timestamp   : $(date -u)"
           echo ""
-          echo "✅ Deployment complete."
-          # TODO: Replace with your real deploy command, e.g.:
-          #   SSH  → ssh user@host "cd /app && git pull && systemctl restart app"
-          #   PyPI → python -m twine upload dist/*
-
-      - name: Notify — Success
-        if: success()
-        run: |
-          echo "🎉 Deployment to ${{ inputs.environment }} succeeded!"
-          echo "⏸  Waiting for manual approval to proceed to Post-Deploy phase..."
+          echo "✅ QA deployment complete."
+          # TODO: Replace with your real QA deploy command, e.g.:
+          #   ssh user@qa-host "cd /app && git pull && systemctl restart app"
 
       - name: Notify — Failure
         if: failure()
-        run: echo "❌ Deployment failed — review the logs above."
+        run: echo "❌ QA deployment failed — review the logs above."
 
-  # ── Phase 3: Post-Deploy ──────────────────────────────────────────────────────
-  # Blocked until Phase 2 passes. GitHub pauses again for approval before
-  # running smoke/integration tests against the deployed environment.
-  post-deploy:
-    name: "Phase 3 — Post-Deploy Verification"
-    needs: deploy                       # ← cannot start until deploy passes
+  # ── Phase 3: Post-Deploy QA ───────────────────────────────────────────────────
+  # Runs automatically after QA deploy passes.
+  # Verifies QA is healthy before allowing Production promotion.
+  post-deploy-qa:
+    name: "Phase 3 — Post-Deploy QA Verification"
+    needs: deploy-qa
     runs-on: ubuntu-latest
-    environment: production             # ← pauses for human approval gate
+    environment: qa
 
     steps:
       - name: Checkout code
@@ -141,7 +131,7 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
-      # ── Quality Gates (same as pre-deploy) ────────────────────
+      # ── Quality Gates ──────────────────────────────────────────
       - name: Black — Format check
         run: black --check .
 
@@ -161,9 +151,9 @@ jobs:
         run: pytest tests/ --cov=src --cov-report=term-missing
 
       # ── Smoke Tests ────────────────────────────────────────────
-      - name: Smoke Tests
+      - name: Smoke Tests — QA
         run: |
-          echo "🔍 Running post-deploy smoke tests against: ${{ inputs.environment }}"
+          echo "🔍 Running smoke tests against QA..."
           if pytest tests/ -m smoke --co -q 2>/dev/null | grep -q "test session"; then
             pytest tests/ -m smoke -v
           else
@@ -171,20 +161,135 @@ jobs:
             pytest tests/ --tb=short
           fi
 
-      - name: Post-Deploy Summary
+      - name: QA Verification Summary
         if: success()
         run: |
-          echo "✅ Post-deploy verification passed!"
-          echo "   Environment : ${{ inputs.environment }}"
+          echo "✅ QA verification passed!"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo ""
+          echo "⏸  Waiting for manual approval to promote to Production..."
+
+      - name: QA Verification — Failure
+        if: failure()
+        run: |
+          echo "❌ QA verification FAILED — Production promotion blocked."
+
+  # ── Phase 4: Deploy to Production ────────────────────────────────────────────
+  # *** ONE APPROVAL GATE ***
+  # Blocked until QA verification passes. GitHub then pauses and shows
+  # "Waiting for review" — a reviewer must approve before deploy runs.
+  # Enable Required Reviewers on the 'production' environment:
+  #   Settings → Environments → production → Required Reviewers
+  deploy-prod:
+    name: "Phase 4 — Deploy to Production"
+    needs: post-deploy-qa
+    runs-on: ubuntu-latest
+    environment: production             # ← THE approval gate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy to Production
+        run: |
+          echo "🚀 Deploying to Production..."
           echo "   Branch      : ${{ github.ref_name }}"
           echo "   Commit      : ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
           echo "   Timestamp   : $(date -u)"
           echo ""
-          echo "🏁 Full deployment pipeline complete."
+          echo "✅ Production deployment complete."
+          # TODO: Replace with your real Production deploy command, e.g.:
+          #   ssh user@prod-host "cd /app && git pull && systemctl restart app"
 
-      - name: Post-Deploy Summary — Failure
+      - name: Notify — Success
+        if: success()
+        run: |
+          echo "🎉 Production deployment succeeded!"
+          echo "🚦 Proceeding automatically to post-deploy verification..."
+
+      - name: Notify — Failure
+        if: failure()
+        run: echo "❌ Production deployment failed — review the logs above."
+
+  # ── Phase 5: Post-Deploy Production ──────────────────────────────────────────
+  # Runs automatically after Production deploy passes. No approval needed.
+  # Verifies Production is healthy after the deployment.
+  post-deploy-prod:
+    name: "Phase 5 — Post-Deploy Production Verification"
+    needs: deploy-prod
+    runs-on: ubuntu-latest
+    # No 'environment:' tag — runs automatically without triggering another approval gate.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── Quality Gates ──────────────────────────────────────────
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      # ── Smoke Tests ────────────────────────────────────────────
+      - name: Smoke Tests — Production
+        run: |
+          echo "🔍 Running smoke tests against Production..."
+          if pytest tests/ -m smoke --co -q 2>/dev/null | grep -q "test session"; then
+            pytest tests/ -m smoke -v
+          else
+            echo "ℹ️  No @pytest.mark.smoke tests found — running full suite as health check."
+            pytest tests/ --tb=short
+          fi
+
+      - name: Production Verification Summary
+        if: success()
+        run: |
+          echo "✅ Production verification passed!"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "🏁 Full QA → Production deployment pipeline complete."
+
+      - name: Production Verification — Failure
         if: failure()
         run: |
-          echo "❌ Smoke tests FAILED on ${{ inputs.environment }}!"
-          echo "   Consider rolling back the deployment."
+          echo "❌ Production smoke tests FAILED!"
+          echo "   Investigate immediately — consider rolling back the deployment."
