@@ -1,0 +1,190 @@
+# .github/workflows/deploy-pipeline.yml
+name: Deploy Pipeline — Pre / Deploy / Post
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  # ── Phase 1: Pre-Deploy ───────────────────────────────────────────────────────
+  # Runs immediately on trigger. All quality gates must pass before deploy starts.
+  pre-deploy:
+    name: "Phase 1 — Pre-Deploy Gates"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      - name: Pre-Deploy Summary
+        if: success()
+        run: |
+          echo "✅ All pre-deploy gates passed!"
+          echo "   Environment : ${{ inputs.environment }}"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo ""
+          echo "⏸  Waiting for manual approval to proceed to Deploy phase..."
+
+  # ── Phase 2: Deploy ───────────────────────────────────────────────────────────
+  # Blocked until Phase 1 passes. GitHub then pauses for environment approval
+  # before running the deploy steps (requires Required Reviewers on the
+  # production environment in Settings → Environments → production).
+  deploy:
+    name: "Phase 2 — Deploy"
+    needs: pre-deploy                   # ← cannot start until pre-deploy passes
+    runs-on: ubuntu-latest
+    environment: production             # ← pauses for human approval gate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy
+        run: |
+          echo "🚀 Starting deployment..."
+          echo "   Environment : ${{ inputs.environment }}"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "✅ Deployment complete."
+          # TODO: Replace with your real deploy command, e.g.:
+          #   SSH  → ssh user@host "cd /app && git pull && systemctl restart app"
+          #   PyPI → python -m twine upload dist/*
+
+      - name: Notify — Success
+        if: success()
+        run: |
+          echo "🎉 Deployment to ${{ inputs.environment }} succeeded!"
+          echo "⏸  Waiting for manual approval to proceed to Post-Deploy phase..."
+
+      - name: Notify — Failure
+        if: failure()
+        run: echo "❌ Deployment failed — review the logs above."
+
+  # ── Phase 3: Post-Deploy ──────────────────────────────────────────────────────
+  # Blocked until Phase 2 passes. GitHub pauses again for approval before
+  # running smoke/integration tests against the deployed environment.
+  post-deploy:
+    name: "Phase 3 — Post-Deploy Verification"
+    needs: deploy                       # ← cannot start until deploy passes
+    runs-on: ubuntu-latest
+    environment: production             # ← pauses for human approval gate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── Quality Gates (same as pre-deploy) ────────────────────
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      # ── Smoke Tests ────────────────────────────────────────────
+      - name: Smoke Tests
+        run: |
+          echo "🔍 Running post-deploy smoke tests against: ${{ inputs.environment }}"
+          if pytest tests/ -m smoke --co -q 2>/dev/null | grep -q "test session"; then
+            pytest tests/ -m smoke -v
+          else
+            echo "ℹ️  No @pytest.mark.smoke tests found — running full suite as health check."
+            pytest tests/ --tb=short
+          fi
+
+      - name: Post-Deploy Summary
+        if: success()
+        run: |
+          echo "✅ Post-deploy verification passed!"
+          echo "   Environment : ${{ inputs.environment }}"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "🏁 Full deployment pipeline complete."
+
+      - name: Post-Deploy Summary — Failure
+        if: failure()
+        run: |
+          echo "❌ Smoke tests FAILED on ${{ inputs.environment }}!"
+          echo "   Consider rolling back the deployment."
