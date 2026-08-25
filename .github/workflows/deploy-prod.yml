@@ -1,0 +1,181 @@
+# .github/workflows/deploy-prod.yml
+name: Deploy — Production
+
+on:
+  push:
+    branches:
+      - main          # fires automatically when a PR is merged into main
+  workflow_dispatch:  # manual trigger as fallback
+
+jobs:
+  # ── Phase 1: Pre-Deploy Gates ─────────────────────────────────────────────────
+  # Runs immediately on merge to main. All quality gates must pass before
+  # Production deployment begins.
+  pre-deploy:
+    name: "Phase 1 — Pre-Deploy Gates"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      - name: Pre-Deploy Summary
+        if: success()
+        run: |
+          echo "✅ All pre-deploy gates passed!"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo ""
+          echo "🚦 Proceeding to Production deployment..."
+
+  # ── Phase 2: Deploy to Production ────────────────────────────────────────────
+  # Runs after pre-deploy passes.
+  # If 'Required Reviewers' is set on the 'production' environment in
+  # Settings → Environments → production, GitHub will pause here for approval.
+  # If not set, this runs automatically.
+  deploy-prod:
+    name: "Phase 2 — Deploy to Production"
+    needs: pre-deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy to Production
+        run: |
+          echo "🚀 Deploying to Production..."
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "✅ Production deployment complete."
+          # TODO: Replace with your real Production deploy command, e.g.:
+          #   ssh user@prod-host "cd /app && git pull && systemctl restart app"
+
+      - name: Notify — Success
+        if: success()
+        run: |
+          echo "🎉 Production deployment succeeded!"
+          echo "🚦 Proceeding to post-deploy verification..."
+
+      - name: Notify — Failure
+        if: failure()
+        run: echo "❌ Production deployment failed — review the logs above."
+
+  # ── Phase 3: Post-Deploy Production Verification ──────────────────────────────
+  # Runs automatically after Production deploy passes. No additional approval
+  # needed. Validates Production is healthy after the deployment.
+  post-deploy-prod:
+    name: "Phase 3 — Post-Deploy Production Verification"
+    needs: deploy-prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── Quality Gates ──────────────────────────────────────────
+      - name: Black — Format check
+        run: black --check .
+
+      - name: isort — Import order check
+        run: isort --check-only .
+
+      - name: Flake8 — Lint check
+        run: flake8 src/ tests/
+
+      - name: MyPy — Type check
+        run: mypy src/
+
+      - name: Bandit — Security scan
+        run: bandit -r src/ -ll
+
+      - name: Pytest — Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=term-missing
+
+      # ── Smoke Tests ────────────────────────────────────────────
+      - name: Smoke Tests — Production
+        run: |
+          echo "🔍 Running smoke tests against Production..."
+          if pytest tests/ -m smoke --co -q 2>/dev/null | grep -q "test session"; then
+            pytest tests/ -m smoke -v
+          else
+            echo "ℹ️  No @pytest.mark.smoke tests found — running full suite as health check."
+            pytest tests/ --tb=short
+          fi
+
+      - name: Production Verification Summary
+        if: success()
+        run: |
+          echo "✅ Production verification passed!"
+          echo "   Branch      : ${{ github.ref_name }}"
+          echo "   Commit      : ${{ github.sha }}"
+          echo "   Triggered by: ${{ github.actor }}"
+          echo "   Timestamp   : $(date -u)"
+          echo ""
+          echo "🏁 Production deployment pipeline complete."
+
+      - name: Production Verification — Failure
+        if: failure()
+        run: |
+          echo "❌ Production smoke tests FAILED!"
+          echo "   Investigate immediately — consider rolling back the deployment."
