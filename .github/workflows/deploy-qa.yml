@@ -4,7 +4,8 @@ name: Deploy — QA
 on:
   push:
     branches:
-      - "feature/**"
+      - "featurebranch"       # exact branch name
+      - "featurebranch/**"    # featurebranch/sub-branch style
       - "fix/**"
       - "bugfix/**"
       - "hotfix/**"
@@ -15,7 +16,7 @@ jobs:
   # ── Phase 1: Pre-Deploy Gates ─────────────────────────────────────────────────
   # Runs immediately on push. All quality gates must pass before QA deployment.
   pre-deploy:
-    name: "Phase 1 — Pre-Deploy Gates"
+    name: "Pre-Deploy Gates QA"
     runs-on: ubuntu-latest
 
     steps:
@@ -69,7 +70,7 @@ jobs:
   # ── Phase 2: Deploy to QA ─────────────────────────────────────────────────────
   # Runs automatically after pre-deploy passes. No approval needed.
   deploy-qa:
-    name: "Phase 2 — Deploy to QA"
+    name: "Deploy to QA"
     needs: pre-deploy
     runs-on: ubuntu-latest
     environment: qa
@@ -103,7 +104,7 @@ jobs:
   # Runs automatically after QA deploy passes. Validates QA is healthy.
   # If this fails, open a PR to main is blocked by the broken QA state.
   post-deploy-qa:
-    name: "Phase 3 — Post-Deploy QA Verification"
+    name: "Post-Deploy QA Verification"
     needs: deploy-qa
     runs-on: ubuntu-latest
     environment: qa

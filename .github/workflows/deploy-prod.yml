@@ -12,7 +12,7 @@ jobs:
   # Runs immediately on merge to main. All quality gates must pass before
   # Production deployment begins.
   pre-deploy:
-    name: "Phase 1 — Pre-Deploy Gates"
+    name: "Pre-Deploy Gates - Prod"
     runs-on: ubuntu-latest
 
     steps:
@@ -69,7 +69,7 @@ jobs:
   # Settings → Environments → production, GitHub will pause here for approval.
   # If not set, this runs automatically.
   deploy-prod:
-    name: "Phase 2 — Deploy to Production"
+    name: "Deploy to Production"
     needs: pre-deploy
     runs-on: ubuntu-latest
     environment: production
@@ -109,7 +109,7 @@ jobs:
   # Runs automatically after Production deploy passes. No additional approval
   # needed. Validates Production is healthy after the deployment.
   post-deploy-prod:
-    name: "Phase 3 — Post-Deploy Production Verification"
+    name: "Post-Deploy Production Verification"
     needs: deploy-prod
     runs-on: ubuntu-latest
 
