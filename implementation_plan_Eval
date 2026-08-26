@@ -1,0 +1,211 @@
+# CI/CD Best-Practice Pipeline — Implementation Plan
+
+Restructure the existing GitHub Actions workflows for the **cicd-quality-demo** calculator project to clearly follow the 5-stage best-practice CI/CD model:
+
+```
+Build (+ Security Checks) → Test → Deploy → Post-Deploy
+```
+
+## Current State Analysis
+
+Your workspace already has a solid foundation:
+
+| Asset | Status | Notes |
+|-------|--------|-------|
+| [ci.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/ci.yml) | ✅ Exists | Mixes all gates into a single `quality` job |
+| [deploy-qa.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy-qa.yml) | ✅ Exists | Deploy + post-deploy for QA |
+| [deploy-prod.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy-prod.yml) | ✅ Exists | Deploy + post-deploy + tagging for Prod |
+| [requirements-dev.txt](file:///c:/Users/Ranganathan.9703/Documents/learning/requirements-dev.txt) | ✅ Exists | Has black, isort, flake8, mypy, bandit, pytest, pytest-cov, build |
+| [pyproject.toml](file:///c:/Users/Ranganathan.9703/Documents/learning/pyproject.toml) | ✅ Exists | Black, isort, mypy configs |
+| [.pre-commit-config.yaml](file:///c:/Users/Ranganathan.9703/Documents/learning/.pre-commit-config.yaml) | ✅ Exists | Pre-commit hooks for all tools |
+
+### What's Missing / Can Be Improved
+
+1. **`ci.yml` is a flat monolith** — all quality gates (lint, type-check, security, tests) run sequentially in one job. This doesn't reflect distinct pipeline stages and gives slow feedback.
+2. **No explicit "Build" stage** — the wheel build only happens in the deploy workflows, not validated in CI.
+3. **No dependency vulnerability scanning** — `bandit` covers source code SAST, but there's no check for vulnerable third-party packages (e.g., `pip-audit`).
+4. **No integration test separation** — unit tests and integration tests are combined in the same pytest run.
+5. **No artifact passing between stages** — each deploy workflow rebuilds from scratch instead of reusing a verified artifact.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Deploy Target**: Your current deploy steps are placeholder `echo` commands. This plan keeps them as placeholders. Do you have a specific deploy target in mind (e.g., AWS, Azure, Docker registry, PyPI)?
+
+> [!IMPORTANT]
+> **Integration Tests**: You currently have only unit tests. Do you want me to create sample integration test files, or will you add them later?
+
+## Open Questions
+
+1. **Secrets scanning**: Do you want to add a secrets detection tool (e.g., `gitleaks` or `trufflehog`) to catch leaked API keys/passwords in commits?
+2. **DAST in post-deploy**: Since this is a library (not a running service), the post-deploy smoke tests are placeholder. Would you like me to structure them for a future web service, or keep them library-focused?
+
+---
+
+## Proposed Changes
+
+### Stage Model
+
+The restructured pipeline will follow this flow:
+
+```mermaid
+graph LR
+    A["🔨 Build + Security<br/>Compile, lint, SAST, dep audit"] --> B["🧪 Test<br/>Unit tests + coverage"]
+    B --> C["🚀 Deploy<br/>Push artifact to target"]
+    C --> D["✅ Post-Deploy<br/>Smoke tests + health checks"]
+```
+
+All five stages map to **separate jobs** within the workflows, connected with `needs:` dependencies so they fail fast and give clear feedback on *which stage* broke.
+
+---
+
+### CI Workflow (runs on every push & PR)
+
+#### [MODIFY] [ci.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/ci.yml)
+
+Replace the current single-job workflow with a **multi-stage pipeline** containing 4 jobs:
+
+**Job 1 — `build`** (Stage: Build + Security)
+- Checkout + setup Python 3.11
+- Cache pip dependencies
+- Install `requirements-dev.txt`
+- Run **Black** format check
+- Run **isort** import order check
+- Run **Flake8** lint check
+- Run **MyPy** type check
+- Run **Bandit** SAST scan on `src/` (medium+ severity)
+- Run **pip-audit** to check for known vulnerabilities in dependencies
+- Build the wheel (`python -m build --wheel`)
+- Upload the wheel as a **GitHub Actions artifact** for downstream jobs
+
+**Job 2 — `test`** (Stage: Test, `needs: build`)
+- Download the built wheel artifact
+- Run **pytest** with coverage (`--cov=src --cov-report=term-missing --cov-report=xml`)
+- Upload coverage report to **Codecov** (replaces the separate `coverage` job)
+
+**Job 3 — `build-summary`** (Stage: Summary, `needs: test`)
+- Print a consolidated CI pass/fail summary with branch, commit, and timestamp
+
+---
+
+### Deploy Workflows
+
+#### [MODIFY] [deploy-qa.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy-qa.yml)
+
+Restructure into 2 clearly labeled stages:
+
+**Job 1 — `deploy-qa`** (Stage: Deploy)
+- No changes to core logic
+- Add: download the built artifact from CI (when available) instead of rebuilding
+- Keep the placeholder deploy step with clear TODO comments
+
+**Job 2 — `post-deploy-qa`** (Stage: Post-Deploy, `needs: deploy-qa`)
+- No changes needed — already well-structured with smoke tests and health checks
+
+#### [MODIFY] [deploy-prod.yml](file:///c:/Users/Ranganathan.9703/Documents/learning/.github/workflows/deploy-prod.yml)
+
+Restructure into 3 clearly labeled stages:
+
+**Job 1 — `deploy-prod`** (Stage: Deploy)
+- Same improvements as QA deploy
+- Keep `environment: production` for manual approval gates
+
+**Job 2 — `post-deploy-prod`** (Stage: Post-Deploy, `needs: deploy-prod`)
+- No changes needed — already has smoke tests and rollback guidance
+
+**Job 3 — `tag-release`** (Stage: Release, `needs: post-deploy-prod`)
+- No changes needed — already creates and pushes versioned tags
+
+---
+
+### Dev Dependencies
+
+#### [MODIFY] [requirements-dev.txt](file:///c:/Users/Ranganathan.9703/Documents/learning/requirements-dev.txt)
+
+Add `pip-audit` for dependency vulnerability scanning:
+
+```diff
+ black==24.4.2
+ isort==5.13.2
+ flake8==7.1.0
+ mypy==1.10.0
+ bandit==1.7.9
+ pytest==8.2.2
+ pytest-cov==5.0.0
+ build==1.2.1
++pip-audit==2.7.3
+```
+
+---
+
+### Test Organization
+
+#### [NEW] [tests/conftest_markers.py](file:///c:/Users/Ranganathan.9703/Documents/learning/tests/conftest_markers.py)
+
+Register `smoke` and `integration` pytest markers in the existing test configuration so `pytest -m smoke` works without warnings.
+
+#### [MODIFY] [pyproject.toml](file:///c:/Users/Ranganathan.9703/Documents/learning/pyproject.toml)
+
+Add pytest marker configuration:
+
+```diff
+ [tool.mypy]
+ python_version = "3.11"
+ strict = true
+ ignore_missing_imports = true
++
++[tool.pytest.ini_options]
++markers = [
++    "smoke: quick post-deploy health check tests",
++    "integration: slower integration tests",
++]
+```
+
+---
+
+### Documentation
+
+#### [MODIFY] [README.md](file:///c:/Users/Ranganathan.9703/Documents/learning/README.md)
+
+Update the "CI/CD Pipeline" section to reflect the new 5-stage model with a clear diagram.
+
+---
+
+## Summary of Changes
+
+| File | Action | What Changes |
+|------|--------|--------------|
+| `.github/workflows/ci.yml` | MODIFY | Split into `build` (incl. security) → `test` → `summary` jobs |
+| `.github/workflows/deploy-qa.yml` | MODIFY | Minor: add stage labels and artifact reuse |
+| `.github/workflows/deploy-prod.yml` | MODIFY | Minor: add stage labels and artifact reuse |
+| `requirements-dev.txt` | MODIFY | Add `pip-audit` |
+| `pyproject.toml` | MODIFY | Add pytest marker config |
+| `README.md` | MODIFY | Update pipeline documentation |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+```bash
+# Verify all tools still work locally
+black --check .
+isort --check-only .
+flake8 src/ tests/
+mypy src/
+bandit -r src/ -ll
+pip-audit
+pytest tests/ --cov=src --cov-report=term-missing
+python -m build --wheel --outdir dist/
+```
+
+### Workflow Validation
+- Validate YAML syntax of all workflow files
+- Push to a feature branch and verify the CI pipeline runs with all 4 stages visible in GitHub Actions
+- Verify each stage shows as a separate job in the Actions UI with clear pass/fail status
+
+### Manual Verification
+- Confirm the GitHub Actions UI shows the pipeline stages as a visual graph (build → test → summary)
+- Verify that if one stage fails, downstream stages are skipped

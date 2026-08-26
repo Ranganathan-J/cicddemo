@@ -13,11 +13,13 @@ on:
   workflow_dispatch:   # manual trigger as fallback
 
 jobs:
-  # ── Phase 1: Deploy to QA ────────────────────────────────────────────────────
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage: DEPLOY
   # Checks out the exact commit, builds the wheel, and deploys to QA.
   # Quality gates already passed in ci.yml — no duplication here.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   deploy-qa:
-    name: "Deploy to QA"
+    name: "Stage: Deploy to QA"
     runs-on: ubuntu-latest
     environment: qa
 
@@ -67,13 +69,15 @@ jobs:
         if: failure()
         run: echo "❌ QA deployment failed — review the logs above."
 
-  # ── Phase 2: Post-Deploy QA Verification ─────────────────────────────────────
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage: POST-DEPLOY
   # Verifies QA is healthy after deployment. Tests the running service,
   # not the source code quality (gates already ran in ci.yml).
   # When you have a real QA URL, replace the pytest block with:
   #   curl -f https://your-qa-service/health || exit 1
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   post-deploy-qa:
-    name: "Post-Deploy QA Verification"
+    name: "Stage: Post-Deploy QA Verification"
     needs: deploy-qa
     runs-on: ubuntu-latest
     environment: qa
