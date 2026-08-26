@@ -1,5 +1,5 @@
 # .github/workflows/ci.yml
-name: CI — Code Quality & Tests
+name: CI — Build, Security & Tests
 
 on:
   push:
@@ -15,8 +15,13 @@ on:
     branches: [main]
 
 jobs:
-  quality:
-    name: Code Quality Gates
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage 1: BUILD + SECURITY
+  # Compile, lint, format-check, type-check, SAST, dependency audit, and
+  # build the distributable wheel artifact.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  build:
+    name: "Build + Security"
     runs-on: ubuntu-latest
 
     steps:
@@ -44,42 +49,120 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       # ── Gate 1: Black ─────────────────────────────────────────
-      - name: Black — Format check
+      - name: "Black — Format check"
         run: black --check .
 
       # ── Gate 2: isort ─────────────────────────────────────────
-      - name: isort — Import order check
+      - name: "isort — Import order check"
         run: isort --check-only .
 
       # ── Gate 3: Flake8 ────────────────────────────────────────
-      - name: Flake8 — Lint check
+      - name: "Flake8 — Lint check"
         run: flake8 src/ tests/
 
       # ── Gate 4: MyPy ──────────────────────────────────────────
-      - name: MyPy — Type check
+      - name: "MyPy — Type check"
         run: mypy src/
 
-      # ── Gate 5: Bandit ────────────────────────────────────────
-      - name: Bandit — Security scan
+      # ── Gate 5: Bandit (SAST) ─────────────────────────────────
+      - name: "Bandit — Security scan (SAST)"
         run: bandit -r src/ -ll   # flag only medium+ severity
 
-      # ── Tests ─────────────────────────────────────────────────
-      - name: Pytest — Run tests with coverage
-        run: pytest tests/ --cov=src --cov-report=term-missing
+      # ── Gate 6: pip-audit (Dependency Vulnerabilities) ─────────
+      - name: "pip-audit — Dependency vulnerability check"
+        run: pip-audit
 
-  # ── Upload coverage report ─────────────────────────────────────
-  coverage:
-    name: Upload Coverage
-    needs: quality
+      # ── Build Wheel ────────────────────────────────────────────
+      - name: "Build wheel artifact"
+        run: python -m build --wheel --outdir dist/
+
+      - name: Show built artifact
+        run: |
+          echo "📦 Built artifact:"
+          ls -lh dist/
+
+      # ── Upload Artifact ────────────────────────────────────────
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheel
+          path: dist/*.whl
+          retention-days: 5
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage 2: TEST
+  # Run the full test suite with coverage against the verified build.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  test:
+    name: "Test — Unit & Coverage"
+    needs: build
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements-dev.txt
-      - run: pytest tests/ --cov=src --cov-report=xml
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── Download the verified wheel ─────────────────────────────
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-wheel
+          path: dist/
+
+      # ── Unit Tests with Coverage ────────────────────────────────
+      - name: "Pytest — Run tests with coverage"
+        run: pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml
+
+      # ── Upload Coverage ─────────────────────────────────────────
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage 3: SUMMARY
+  # Consolidated pass/fail status for the entire CI pipeline.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  build-summary:
+    name: "CI Summary"
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: CI Pipeline Result
+        run: |
+          echo "═══════════════════════════════════════════════════"
+          echo "  CI Pipeline Summary"
+          echo "═══════════════════════════════════════════════════"
+          echo "  Branch      : ${{ github.ref_name }}"
+          echo "  Commit      : ${{ github.sha }}"
+          echo "  Triggered by: ${{ github.actor }}"
+          echo "  Timestamp   : $(date -u)"
+          echo "═══════════════════════════════════════════════════"
+          echo ""
+          echo "  Build + Security : ${{ needs.build.result }}"
+          echo "  Test             : ${{ needs.test.result }}"
+          echo ""
+          if [ "${{ needs.test.result }}" = "success" ]; then
+            echo "  ✅ All CI stages passed!"
+          else
+            echo "  ❌ CI pipeline failed — check the logs above."
+            exit 1
+          fi

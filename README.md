@@ -12,7 +12,8 @@ A hands-on learning project for CI/CD pipeline development with code quality enf
 | **isort** | Import statement organizer |
 | **Flake8** | PEP 8 linter |
 | **MyPy** | Static type checker |
-| **Bandit** | Security vulnerability scanner |
+| **Bandit** | Security vulnerability scanner (SAST) |
+| **pip-audit** | Dependency vulnerability scanner |
 | **GitHub Actions** | CI/CD pipeline automation |
 
 ## Project Structure
@@ -100,14 +101,27 @@ pre-commit run --all-files    # test manually
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow runs on every push and pull request:
+The pipeline follows a **best-practice multi-stage model**:
 
-1. ✅ **Black** — format check
-2. ✅ **isort** — import order check
-3. ✅ **Flake8** — lint check
-4. ✅ **MyPy** — type check
-5. ✅ **Bandit** — security scan
-6. ✅ **Pytest** — tests with coverage
+```
+Build (+Security) → Test → Deploy → Post-Deploy
+```
+
+### CI Workflow (every push & PR)
+
+| Stage | Job | What it does |
+|-------|-----|-------------|
+| **Build + Security** | `build` | Black, isort, Flake8, MyPy, Bandit SAST, pip-audit, build wheel |
+| **Test** | `test` | Pytest with coverage, Codecov upload |
+| **Summary** | `build-summary` | Consolidated pass/fail report |
+
+### Deploy Workflows (QA & Production)
+
+| Stage | What it does |
+|-------|-------------|
+| **Deploy** | Build wheel artifact, push to target environment |
+| **Post-Deploy** | Smoke tests, health checks, verification |
+| **Release** *(prod only)* | Git tag creation for audit trail |
 
 ## Branch Strategy
 

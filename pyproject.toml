@@ -12,3 +12,9 @@ known_first_party = ["calculator"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: quick post-deploy health check tests",
+    "integration: slower integration tests",
+]

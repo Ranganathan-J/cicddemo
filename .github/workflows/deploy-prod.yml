@@ -8,13 +8,15 @@ on:
   workflow_dispatch:  # manual trigger as fallback
 
 jobs:
-  # ── Phase 1: Deploy to Production ────────────────────────────────────────────
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage: DEPLOY
   # Checks out the exact merged commit, builds the wheel, and deploys.
   # Quality gates already passed in ci.yml on the PR — no duplication here.
   # If 'Required Reviewers' is set on the 'production' environment in
   # Settings → Environments → production, GitHub pauses here for approval.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   deploy-prod:
-    name: "Deploy to Production"
+    name: "Stage: Deploy to Production"
     runs-on: ubuntu-latest
     environment: production
 
@@ -70,12 +72,14 @@ jobs:
         if: failure()
         run: echo "❌ Production deployment failed — review the logs above."
 
-  # ── Phase 2: Post-Deploy Production Verification ──────────────────────────────
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage: POST-DEPLOY
   # Verifies Production is healthy. Runs automatically after deploy-prod passes.
   # When you have a real Production URL, replace the pytest block with:
   #   curl -f https://your-prod-service.com/health || exit 1
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   post-deploy-prod:
-    name: "Post-Deploy Production Verification"
+    name: "Stage: Post-Deploy Production Verification"
     needs: deploy-prod
     runs-on: ubuntu-latest
 
@@ -130,11 +134,13 @@ jobs:
           echo "   2. Redeploy from that tag's commit"
           echo "   # TODO: Add your real rollback command here"
 
-  # ── Phase 3: Tag Release ──────────────────────────────────────────────────────
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Stage: RELEASE
   # Creates a Git tag (v<run_number>) on every successful Production deployment.
   # Gives a clear audit trail: which run number = which production release.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   tag-release:
-    name: "Tag Release"
+    name: "Stage: Tag Release"
     needs: post-deploy-prod
     runs-on: ubuntu-latest
     permissions:
